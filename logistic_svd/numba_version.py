@@ -1,6 +1,8 @@
 import numpy as np
 
 import scipy as sp
+import scipy.sparse
+import scipy.sparse.linalg
 import sys
 
 import numba
@@ -28,7 +30,7 @@ def simpletqdm(n,verbose=True):
     if verbose:
 
         print("out of %d: "%n)
-        batch=int(n/20)
+        batch=int(n/20)+1
         for i in range(n):
             if (i%batch)==0:
                 sys.stdout.write("%d "%i)
@@ -39,13 +41,12 @@ def simpletqdm(n,verbose=True):
         for i in range(n):
             yield i
 
-def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=True):
+def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=True,compute_all_likelihoods=True):
     if dmhalf is None:
         dmhalf =binary_matrix-.5
-
     dmhalf=np.require(dmhalf,dtype=np.float64)
 
-    U,e,V = sp.sparse.linalg.svds(dmhalf,rank)
+    U,e,V = sp.sparse.linalg.svds(4*dmhalf,rank)
 
     approx=approx*1
 
@@ -54,11 +55,21 @@ def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=T
     logits=z@alpha.T
 
     likelihoods=[]
+    if not compute_all_likelihoods:
+        likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
+
     for i in simpletqdm(n_iterations,verbose=verbose):
-        likelihoods.append(np.mean(likelihood(dmhalf_train,z,alpha)))
-        alpha=pgbinarymatrixfactorization.logsvd_numba.update_alpha(dmhalf_train,z,alpha,approx)
-        z=pgbinarymatrixfactorization.logsvd_numba.update_z(dmhalf_train,z,alpha,approx)
-        z=z/np.sqrt(np.mean(np.sum(z**2,axis=1))) # keep Zs normalized on average
+        if compute_all_likelihoods:
+            likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
+        alpha=update_alpha(dmhalf,z,alpha,approx)
+        z=update_z(dmhalf,z,alpha,approx)
+
+        NRMS=np.sqrt(np.mean(np.sum(z**2,axis=1)))
+        z=z/NRMS # keep Zs normalized on average
+        alpha=alpha*NRMS
+
+    likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
+
     likelihoods=np.array(likelihoods)
 
     return z,alpha,likelihoods
@@ -73,6 +84,10 @@ def likelihood(dmhalf,z,alpha):
         l+=np.sum(logits*dmhalf[c]) - np.sum(np.log(2*np.cosh(logits/2)))
 
     return l/(Nc*Nk)
+
+
+def update_z(dmhalf,z,alpha,approx):
+    return update_alpha(dmhalf.T,alpha,z,approx)
 
 @numba.njit(float64[:,:](float64[:,:], float64[:,:],float64[:,:],uint8))
 def update_alpha(dmhalf,z,alpha,approx):
@@ -105,3 +120,9 @@ def update_alpha(dmhalf,z,alpha,approx):
 
     return newalpha 
 
+
+def calc_minorizer(logits):
+    minorizer_M = pge_safe(logits)
+    minorizer_k = .5*minorizer_M*logits**2 - np.log(2*np.cosh(logits/2))  
+
+    return minorizer_M,minorizer_k
