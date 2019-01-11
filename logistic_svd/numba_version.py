@@ -41,7 +41,8 @@ def simpletqdm(n,verbose=True):
         for i in range(n):
             yield i
 
-def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=True,compute_all_likelihoods=True):
+def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=True,compute_all_likelihoods=True,
+                        penalty=1.0):
     if dmhalf is None:
         dmhalf =binary_matrix-.5
     dmhalf=np.require(dmhalf,dtype=np.float64)
@@ -56,26 +57,22 @@ def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=T
 
     likelihoods=[]
     if not compute_all_likelihoods:
-        likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
+        likelihoods.append(np.mean(likelihood(dmhalf,z,alpha,penalty)))
 
     for i in simpletqdm(n_iterations,verbose=verbose):
         if compute_all_likelihoods:
-            likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
-        alpha=update_alpha(dmhalf,z,alpha,approx)
-        z=update_z(dmhalf,z,alpha,approx)
+            likelihoods.append(np.mean(likelihood(dmhalf,z,alpha,penalty)))
+        alpha=update_alpha(dmhalf,z,alpha,approx,penalty)
+        z=update_z(dmhalf,z,alpha,approx,penalty)
 
-        NRMS=np.sqrt(np.mean(np.sum(z**2,axis=1)))
-        z=z/NRMS # keep Zs normalized on average
-        alpha=alpha*NRMS
-
-    likelihoods.append(np.mean(likelihood(dmhalf,z,alpha)))
+    likelihoods.append(np.mean(likelihood(dmhalf,z,alpha,penalty)))
 
     likelihoods=np.array(likelihoods)
 
     return z,alpha,likelihoods
 
-@numba.njit(float64(float64[:,:], float64[:,:],float64[:,:]),parallel=True)    
-def likelihood(dmhalf,z,alpha):
+@numba.njit(float64(float64[:,:], float64[:,:],float64[:,:],float64),parallel=True)    
+def likelihood(dmhalf,z,alpha,penalty):
     l=0.0
     Nc,Nk=dmhalf.shape
 
@@ -83,14 +80,16 @@ def likelihood(dmhalf,z,alpha):
         logits = alpha@z[c]
         l+=np.sum(logits*dmhalf[c]) - np.sum(np.log(2*np.cosh(logits/2)))
 
+    l+=-.5*penalty*(np.sum(z**2)+np.sum(alpha**2))
+
     return l/(Nc*Nk)
 
 
-def update_z(dmhalf,z,alpha,approx):
-    return update_alpha(dmhalf.T,alpha,z,approx)
+def update_z(dmhalf,z,alpha,approx,penalty):
+    return update_alpha(dmhalf.T,alpha,z,approx,penalty)
 
-@numba.njit(float64[:,:](float64[:,:], float64[:,:],float64[:,:],uint8))
-def update_alpha(dmhalf,z,alpha,approx):
+@numba.njit(float64[:,:](float64[:,:], float64[:,:],float64[:,:],uint8,float64))
+def update_alpha(dmhalf,z,alpha,approx,penalty):
     '''
     returns an updated alpha
     '''
@@ -115,7 +114,7 @@ def update_alpha(dmhalf,z,alpha,approx):
 
         # solve the equation
         ztx = z.T @ dmhalf[:,g]
-        mtx = (Mg @ prepzs).reshape((Nk,Nk))
+        mtx = (Mg @ prepzs).reshape((Nk,Nk))+np.eye(Nk)*penalty
         newalpha[g] = np.linalg.solve(mtx,ztx)
 
     return newalpha 

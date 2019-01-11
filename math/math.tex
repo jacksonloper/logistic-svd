@@ -1,6 +1,8 @@
 \documentclass{article}
 
 \usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathrsfs}
 
 \begin{document}
 
@@ -67,4 +69,28 @@ z_c^* &= \Gamma^{-1} \alpha^T X_c
 \end{align*}
 
 We can do the same kind of update for $\alpha$.
+
+\section{Regularization}
+
+If the matrix isn't roughly square, regularization can be helpful.  The most trivial regularization is simply an $\mathscr L^2$ penalty.  The inner objective becomes something like
+\[
+f_c(z_c) = -\frac{\lambda}{2}\left\Vert z_c\right\Vert^2 + \sum_{g}\left(x_{c,g}\left(\sum_k z_{ck} \alpha_{gk}\right) - \frac{1}{2}M_{cg}\left(\sum_k z_{ck} \alpha_{gk}\right)^2 \right)
+\]
+Which yields updates like
+\begin{align*}
+\Gamma_{k,k'} &= \sum_g M_{cg}\alpha_{gk}\alpha_{gk'}\\
+z_c^* &= (\Gamma+\lambda I)^{-1} \alpha^T X_c
+\end{align*}
+
+You can also approximate an $\mathscr L^1$ penalty with $\log \cosh$.  This suggests we compute $\zeta_{ck}=\tanh(z_{ck})/z_{ck}$ and consider the objective
+\[
+f_c(z_c) = -\lambda \sum_k \left \zeta_{ck} z_{ck}^2 + \sum_{g}\left(x_{c,g}\left(\sum_k z_{ck} \alpha_{gk}\right) - \frac{1}{2}M_{cg}\left(\sum_k z_{ck} \alpha_{gk}\right)^2 \right)
+\]
+Which yields the update
+\begin{align*}
+\Gamma_{k,k'} &= \sum_g M_{cg}\alpha_{gk}\alpha_{gk'}\\
+z_c^* &= (\Gamma+\lambda \mathrm{diag}(\zeta_c))^{-1} \alpha^T X_c
+\end{align*}
+When $z_c$ is large, this will make the penalization less significant. 
+
 \end{document}
