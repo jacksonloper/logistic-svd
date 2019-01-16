@@ -9,6 +9,8 @@ __pycache__/
 # tex stuff
 *.aux
 *.log
+*.fls
+*.fdb_latexmk
 
 # Distribution / packaging
 .Python
