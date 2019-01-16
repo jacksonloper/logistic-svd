@@ -124,83 +124,83 @@ def calc_minorizer(logits):
     return minorizer_M,minorizer_k
 
 
-@numba.njit(Tuple(float64,float64,float64,float64)(float64[:,:], 
-    float64[:,:],float64[:,:,:],
-    float64[:,:],float64[:,:,:],
-    uint8),parallel=True)
-def elbo(dmhalf,mua,Siga,muz,Sigz,approx):
-    kl_gau_alpha=0.0
-    kl_gau_z=0.0
-    kl_pg=0.0
-    l_data=0.0
-    Nc,Ng=dmhalf.shape
-    Nk=muz.shape[1]
+# @numba.njit(Tuple(float64,float64,float64,float64)(float64[:,:], 
+#     float64[:,:],float64[:,:,:],
+#     float64[:,:],float64[:,:,:],
+#     uint8),parallel=True)
+# def elbo(dmhalf,mua,Siga,muz,Sigz,approx):
+#     kl_gau_alpha=0.0
+#     kl_gau_z=0.0
+#     kl_pg=0.0
+#     l_data=0.0
+#     Nc,Ng=dmhalf.shape
+#     Nk=muz.shape[1]
 
-    # we will need to compute E[alpha[c]alpha[c]^T] for each gene...
-    prepalphass=np.zeros((Ng,Nk*Nk))
-    for g in range(Ng):
-        prepalphass[g]=(np.outer(alpha[c],alpha[c]) + Siga[c]).ravel() 
+#     # we will need to compute E[alpha[c]alpha[c]^T] for each gene...
+#     prepalphass=np.zeros((Ng,Nk*Nk))
+#     for g in range(Ng):
+#         prepalphass[g]=(np.outer(alpha[c],alpha[c]) + Siga[c]).ravel() 
 
-    for c in numba.prange(Nc):
-        kl_gau_z += .5*np.trace(Sigz[c]) + .5*np.sum(muz[c]*muz[c])
-        kl_gau_z += -.5*np.linalg.slogdet(Sigz[c])[1] - .5*Nk
+#     for c in numba.prange(Nc):
+#         kl_gau_z += .5*np.trace(Sigz[c]) + .5*np.sum(muz[c]*muz[c])
+#         kl_gau_z += -.5*np.linalg.slogdet(Sigz[c])[1] - .5*Nk
 
-    for g in numba.prange(Ng):
-        kl_gau_alpha += .5*np.trace(Siga[g]) + .5*np.sum(mua[c]*mua[c])
-        kl_gau_alpha += -.5*np.linalg.slogdet(Siga[g])[1] - .5*Nk
+#     for g in numba.prange(Ng):
+#         kl_gau_alpha += .5*np.trace(Siga[g]) + .5*np.sum(mua[c]*mua[c])
+#         kl_gau_alpha += -.5*np.linalg.slogdet(Siga[g])[1] - .5*Nk
 
-    for c in numba.prange(Nc):
-        psi = (np.outer(muz[c],muz[c])+Sigz[c]).ravel() # size Nk*Nk
-        Elogits = muz[c] @ mualpha.T
-        Elogitsq = np.sum(prepalphass*psi[None],axis=1) # size Ng
-        sqElogitsq = np.sqrt(Elogitsq)
-        if approx: 
-            Mg = pge_safe_approx_II(sqElogitsq) # Nc
-        else:
-            Mg = pge_safe(sqElogitsq) # Nc
+#     for c in numba.prange(Nc):
+#         psi = (np.outer(muz[c],muz[c])+Sigz[c]).ravel() # size Nk*Nk
+#         Elogits = muz[c] @ mualpha.T
+#         Elogitsq = np.sum(prepalphass*psi[None],axis=1) # size Ng
+#         sqElogitsq = np.sqrt(Elogitsq)
+#         if approx: 
+#             Mg = pge_safe_approx_II(sqElogitsq) # Nc
+#         else:
+#             Mg = pge_safe(sqElogitsq) # Nc
 
-        cancel = np.sum(np.log(np.cosh(Elogits/2)))
-        l_data += np.sum(Elogits*dmhalf) - np.log(2)*Nk*Ng - cancel
-        kl_pg += .5*np.sum(Elogitsq*(Mg-1))
-        kl_pg += np.sum(np.log(np.cosh(sqElogitsq/2))) - cancel
+#         cancel = np.sum(np.log(np.cosh(Elogits/2)))
+#         l_data += np.sum(Elogits*dmhalf) - np.log(2)*Nk*Ng - cancel
+#         kl_pg += .5*np.sum(Elogitsq*(Mg-1))
+#         kl_pg += np.sum(np.log(np.cosh(sqElogitsq/2))) - cancel
 
-    return kl_gau_alpha,kl_gau_z,kl_pg,l_data
+#     return kl_gau_alpha,kl_gau_z,kl_pg,l_data
 
-def update_z_variational(dmhalf,mua,Siga,muz,Sigz,approx):
-    return update_alpha_variational(dmhalf.T,muz,Sigz,mua,Sigz,approx)
+# def update_z_variational(dmhalf,mua,Siga,muz,Sigz,approx):
+#     return update_alpha_variational(dmhalf.T,muz,Sigz,mua,Sigz,approx)
 
-@numba.njit(Tuple(float64[:,:],float64[:,:,:])(float64[:,:], 
-    float64[:,:],float64[:,:,:],
-    float64[:,:],float64[:,:,:],
-    uint8))
-def update_alpha_variational(dmhalf,mua,Siga,muz,Sigz,approx):
-    '''
-    returns an updated posteriordistribution for alpha
-    '''
+# @numba.njit(Tuple(float64[:,:],float64[:,:,:])(float64[:,:], 
+#     float64[:,:],float64[:,:,:],
+#     float64[:,:],float64[:,:,:],
+#     uint8))
+# def update_alpha_variational(dmhalf,mua,Siga,muz,Sigz,approx):
+#     '''
+#     returns an updated posteriordistribution for alpha
+#     '''
 
-    Nc,Ng=dmhalf.shape
-    Nk=muz.shape[1]
+#     Nc,Ng=dmhalf.shape
+#     Nk=muz.shape[1]
 
-    newalpha=np.zeros((Ng,Nk))
+#     newalpha=np.zeros((Ng,Nk))
 
-    # we will need to compute E[Z[c]Z[c]^T] for each gene...
-    prepzs=np.zeros((Nc,Nk*Nk))
-    for c in range(Nc):
-        prepzs[c]=(np.outer(z[c],z[c]) + Sigz[c]).ravel() 
+#     # we will need to compute E[Z[c]Z[c]^T] for each gene...
+#     prepzs=np.zeros((Nc,Nk*Nk))
+#     for c in range(Nc):
+#         prepzs[c]=(np.outer(z[c],z[c]) + Sigz[c]).ravel() 
 
-    for g in range(Ng):
-        # compute sqrt(E[logit**2])
-        psi = (np.outer(mua[g],mua[g])+Siga[g]).ravel() # size Nk*Nk
+#     for g in range(Ng):
+#         # compute sqrt(E[logit**2])
+#         psi = (np.outer(mua[g],mua[g])+Siga[g]).ravel() # size Nk*Nk
 
-        sqElogitsq = np.sqrt(np.sum(prepzs*psi[None],axis=1)) # size Nc
-        if approx: 
-            Mg = pge_safe_approx_II(sqElogitsq) # Nc
-        else:
-            Mg = pge_safe(sqElogitsq) # Nc
+#         sqElogitsq = np.sqrt(np.sum(prepzs*psi[None],axis=1)) # size Nc
+#         if approx: 
+#             Mg = pge_safe_approx_II(sqElogitsq) # Nc
+#         else:
+#             Mg = pge_safe(sqElogitsq) # Nc
 
-        # solve the equation
-        ztx = z.T @ dmhalf[:,g]
-        mtx = (Mg @ prepzs).reshape((Nk,Nk))+np.eye(Nk)
-        newalpha[g] = np.linalg.solve(mtx,ztx)
+#         # solve the equation
+#         ztx = z.T @ dmhalf[:,g]
+#         mtx = (Mg @ prepzs).reshape((Nk,Nk))+np.eye(Nk)
+#         newalpha[g] = np.linalg.solve(mtx,ztx)
 
-    return newalpha 
+#     return newalpha 
