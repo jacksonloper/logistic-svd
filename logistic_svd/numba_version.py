@@ -68,12 +68,12 @@ def train(rank,n_iterations,binary_matrix=None,dmhalf=None,verbose=True,approx=T
 
     return z,alpha,likelihoods
 
-@numba.njit(float64(float64[:,:], float64[:,:],float64[:,:],float64),parallel=True)    
+@numba.njit(float64(float64[:,:], float64[:,:],float64[:,:],float64)):
 def likelihood(dmhalf,z,alpha,penalty):
     l=0.0
     Nc,Nk=dmhalf.shape
 
-    for c in numba.prange(Nc):
+    for c in numba.range(Nc):
         logits = alpha@z[c]
         l+=np.sum(logits*dmhalf[c]) - np.sum(np.log(2*np.cosh(logits/2)))
 
@@ -85,7 +85,7 @@ def likelihood(dmhalf,z,alpha,penalty):
 def update_z(dmhalf,z,alpha,approx,penalty):
     return update_alpha(dmhalf.T,alpha,z,approx,penalty)
 
-@numba.njit(float64[:,:](float64[:,:], float64[:,:],float64[:,:],uint8,float64))
+@numba.njit(float64[:,:](float64[:,:], float64[:,:],float64[:,:],uint8,float64),fastmath=True)
 def update_alpha(dmhalf,z,alpha,approx,penalty):
     '''
     returns an updated alpha
