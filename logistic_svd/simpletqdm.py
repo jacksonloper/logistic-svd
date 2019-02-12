@@ -1,7 +1,11 @@
 import sys
 
-
 tqdm_type=None
+
+def pnn(s,verbose=True):
+    if verbose:
+        sys.stdout.write(str(s)+" ")
+        sys.stdout.flush()
 
 def tqdm_dispatcher(n,verbose=True):
     global tqdm_type
