@@ -16,7 +16,7 @@ def tqdm_dispatcher(n,verbose=True):
         import tqdm
         return tqdm.tqdm_notebook(range(n))
     else: 
-        return simpletqdm
+        return simpletqdm(n,verbose)
 
 def simpletqdm(n,verbose=True):
     print("out of %d: "%n)

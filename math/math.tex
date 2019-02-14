@@ -14,16 +14,34 @@
 
 \maketitle
 
-\section{Optimization perspective}
+\section{Objective}
 
-\subsection{Objective}
+For any fixed matrix $X$ with entries $X_{cg}\in \{0,1\}$ and any $n\geq1$, let
+\begin{align*}
+L &= \sum_{c,g} \left((X_{c,g}-.5)\left(\sum_k^n Z_{ck} \alpha_{gk}\right) - \log 2 \cosh \frac{1}{2}\sum_k^n Z_{ck} \alpha_{gk}\right)
+\end{align*}
+We here consider the problem of maximizing $L$ with respect to $\alpha,z$.  
 
-For any fixed matrix $X$ with entries $X_{cg}\in \{-.5,.5\}$, consider the problem of optimizing
-\[
-L(Z,\alpha) = \sum_{c,g} \left(X_{c,g}\left(\sum_k Z_{ck} \alpha_{gk}\right) - \log 2 \cosh \frac{1}{2}\sum_k Z_{ck} \alpha_{gk}\right)
-\]
+We additionally consider the case that we would like to maximize a regularized objective.  Specifically, let 
+\begin{align*}
+R^\alpha &= \sum_g-\frac{1}{2}\alpha_g ^T D^\alpha_g \alpha_g + \alpha_g^Td^\alpha_g\\
+R^z &= \sum_c-\frac{1}{2}z_c ^T D^z_c z_c + z_c^Td^z_c
+\end{align*}
+where for each $g$ we have $D^\alpha_g$ is an $n\times n$ square matrix, $d^\alpha$ is a $n$-vector, and likewise for $D^z,d^z$.  We can incorporate these regularizations by trying to maximize $L+R^\alpha+R^z$ instead.
 
-\subsection{Minorization}
+\section{What this code provides}
+
+\begin{enumerate}
+    \item $z,\alpha\gets \mathtt{logistic\_svd.numpy\_version.initialize}(X)$.  Given $X$, uses SVD to give a reasonable initial estimate for $z,\alpha$.
+    \item $\alpha'\gets \mathtt{logistic\_svd.numpy\_version.update\_alpha}(X,z,\alpha,D^\alpha,d^\alpha)$.  Given $X,D^\alpha,d^\alpha$ and an initial guess $z,\alpha$, this function calculates an improved estimate for $\alpha'$, i.e. $L(z,\alpha)+R^\alpha(\alpha) \leq L(z,\alpha')+R^{\alpha}(\alpha')$.  Note that, by the symmetry of this problem, this can be used to update $z$ as well.  
+    \item $\alpha'\gets \mathtt{logistic\_svd.torch\_version.update\_alpha}(X,z,\alpha,D^\alpha,d^\alpha)$.  Same as above, but taking torch tensors as input instead of numpy arrays.
+    \item $L \gets \mathtt{logistic\_svd.numpy\_version.logistic\_likelihood}(X,z,\alpha)$.  Calculates the (unregularized) objective.
+    \item $L \gets \mathtt{logistic\_svd.torch\_version.logistic\_likelihood}(X,z,\alpha)$.  Same but for torch.
+    \item $L \gets \mathtt{logistic\_svd.numpy\_version.quadratic}(z,D^z,d^z)$.  Calculates the regularization.
+    \item $L \gets \mathtt{logistic\_svd.torch\_version.quadratic}(z,D^z,d^z)$.  Same but for torch.
+\end{enumerate}
+
+\section{How the updates work: minorization}
 
 Observe that for any initial condition, $\tilde Z,\tilde \alpha$, we may obtain a simple minorizaton for this problem.  Indeed, let
 \begin{align*}
@@ -41,16 +59,16 @@ Furthermore, it is well-known that
 \]
 Thus $\tilde L$ is a so-called ``minorizer'' for $L$ from the initial condition $\tilde Z,\tilde \alpha$.  We can therefore be guaranteed that if we can find $Z,\alpha$ that improves $\tilde L$, it will also improve our value of $L$.  That is, if we can find $Z,\alpha$ such that $\tilde L_{M,k}(Z,\alpha)>\tilde L_{M,k}(\tilde Z,\tilde \alpha)$, then we will also have $L(Z,\alpha)>L(\tilde Z,\tilde \alpha)$.  This suggests the following iterative process:
 
-\begin{itemize}
+\begin{enumerate}
     \item Start with some initial condition $\tilde Z,\tilde \alpha$.
     \item Calculate $M(\tilde Z,\tilde \alpha),k(\tilde Z,\tilde \alpha)$
     \item Find $Z,\alpha$ such that $\tilde L_{M,k}(Z,\alpha)>\tilde L_{M,k}(\tilde Z,\tilde \alpha)$
     \item Set $\tilde Z \gets Z$, $\tilde \alpha \gets \alpha$, go to step 2.
-\end{itemize}
+\end{enumerate}
 
 To enact this procedure, the key difficulty is step 3.  That is, we need to be able to make progress on the surrogate problem $\tilde L$.  It is to this problem we now turn our attention.
 
-\subsection{Progress on the surrogate problem $\tilde L$}
+\section{Progress on the surrogate problem $\tilde L$}
 
 Here we consider the problem of optimizing 
 \[
@@ -74,109 +92,25 @@ z_c^* &= \Gamma^{-1} \alpha^T X_c
 
 We can do the same kind of update for $\alpha$.
 
-\subsection{Initialization}
+\section{Initialization}
 
-A reasonable initial condition for $M$ is given by $M_{cg}=\lim_{\epsilon\rightarrow 0}\tanh(\epsilon)/(2\epsilon) = .5$.  This leads to the surrogate problem
+If we initialize our problem with $Z=\alpha=0$, our first minorization is given by taking $M_{cg}=\lim_{\epsilon\rightarrow 0}\tanh(\epsilon/2)/(2\epsilon) = .25$.  This leads to the surrogate problem
 \[
-\tilde L_{M,k}(Z,\alpha) = \sum_{c,g} \left(X_{c,g}\left(\sum_k Z_{ck} \alpha_{gk}\right) - \frac{1}{4}\left(\sum_k Z_{ck} \alpha_{gk}\right)^2 \right)
+\tilde L_{M,k}(Z,\alpha) = \sum_{c,g} \left(X_{c,g}\left(\sum_k Z_{ck} \alpha_{gk}\right) - \frac{1}{8}\left(\sum_k Z_{ck} \alpha_{gk}\right)^2 \right)
 \]
-It is easy to see that this problem is solved by taking $Z,\alpha$ as the first left and right singular vectors of $8X$.  This gives a good initialization.
+It is easy to see that this problem is solved by taking $Z,\alpha$ as the first left and right singular vectors of $4(X-.5)$, each multiplied by the square root of the corresponding singular value.  This gives a good initialization.
 
-\subsection{Regularization}
+\section{Regularization}
 
-If the matrix isn't roughly square, regularization can be helpful.  The most trivial regularization is simply an $\mathscr L^2$ penalty.  The inner objective becomes something like
+Introducing per-$c$ and per-$g$ quadratic regularizations is straightforward.  WLOG, let us consider updating $z_c$.  After the minorization recall that the problem has become separable.  The objective for a particular $c$, with regularization, is then
 \[
-f_c(z_c) = -\frac{\lambda}{2}\left\Vert z_c\right\Vert^2 + \sum_{g}\left(x_{c,g}\left(\sum_k z_{ck} \alpha_{gk}\right) - \frac{1}{2}M_{cg}\left(\sum_k z_{ck} \alpha_{gk}\right)^2 \right)
+f_c(z_c) = -\frac{1}{2} z_c^T D z_c + d^Tz_c + \sum_{g} \left(X_{c,g}\left(\sum_k Z_{ck} \alpha_{gk}\right) - \frac{1}{2}M_{cg}\left(\sum_k Z_{ck} \alpha_{gk}\right)^2 \right)
 \]
-Which yields updates like
+It is straightforward to see that this leads to the updates
 \begin{align*}
 \Gamma_{k,k'} &= \sum_g M_{cg}\alpha_{gk}\alpha_{gk'}\\
-z_c^* &= (\Gamma+\lambda I)^{-1} \alpha^T X_c
+z_c^* &= (\Gamma+D)^{-1} (\alpha^T X_c+d)
 \end{align*}
 
-You can also approximate an $\mathscr L^1$ penalty with $\log \cosh$.  This suggests we compute $\zeta_{ck}=\tanh(z_{ck})/z_{ck}$ and consider the objective
-\[
-f_c(z_c) = -\lambda \sum_k \zeta_{ck} z_{ck}^2 + \sum_{g}\left(x_{c,g}\left(\sum_k z_{ck} \alpha_{gk}\right) - \frac{1}{2}M_{cg}\left(\sum_k z_{ck} \alpha_{gk}\right)^2 \right)
-\]
-Which yields the update
-\begin{align*}
-\Gamma_{k,k'} &= \sum_g M_{cg}\alpha_{gk}\alpha_{gk'}\\
-z_c^* &= (\Gamma+\lambda \mathrm{diag}(\zeta_c))^{-1} \alpha^T X_c
-\end{align*}
-When $z_c$ is large, this will make the penalization less significant. 
-
-\section{Bayesian perspective}
-
-\subsection{Model}
-
-Consider the model $p(Z,\alpha,Y,X)$ defined by 
-
-\begin{itemize}
-    \item $Z_c \sim \mathcal{N}(0,I)$
-    \item $\alpha_g \sim \mathcal{N}(0,I)$
-    \item $X_{cg}|Z,\alpha \sim \mathrm{Bernoulli}\left(\frac{\exp(\sum_k Z_{ck} \alpha_{ck})}{1+\exp(\sum_k Z_{ck} \alpha_{ck})}\right)$
-    \item $Y_{cg}|Z,\alpha \sim \mathrm{PolyaGamma}(1,\sum_k Z_{ck} \alpha_{ck})$
-\end{itemize}
-That is, dropping normalizers,
-\[
-\log p(z,\alpha,y,x) = -\frac{\sum_c \Vert z_c \Vert^2 + \sum_g \Vert \alpha_g \Vert^2}{2} + \sum_{cg}\left(\Gamma_{cg} - \log 2 \cosh \frac{1}{2}\Gamma_{cg} -\frac{1}{2}\Gamma_{cg}^2 y_{cg}\right) + \cdots
-\]
-where $\Gamma_{c,g} \triangleq \sum_k z_{ck} \alpha_{ck}$.
-
-\subsection{Variational formulation}
-
-Given observations of $X$, we can get an estimate for the likelihood of the data and the posterior on $Z,\alpha$ using variational methods.  Specifically, consider the variational family $q(Z,\alpha,Y)$ defined by
-\begin{itemize}
-    \item $\alpha_g \sim \mathcal{N}(\hat \mu_{\alpha,g},\hat \Sigma_{\alpha,g})$
-    \item $Z_c \sim \mathcal{N}(\hat \mu_{Z,c},\hat \Sigma_{Z,c})$
-    \item $Y_{cg} \sim \mathrm{PolyaGamma}(1,\hat \xi_{cg})$
-\end{itemize}
-and the corresponding ELBO
-\[
-\mathcal L = \mathbb{E}_q[\log p(x|Z,\alpha,Y)] + \mathbb E_q\left[\log \frac{p(Z,\alpha,Y)}{q(Z,\alpha,Y)}\right]
-\]
-This can be computed as 
-\begin{align*}
-\mathcal{L} &= \sum_{cg} \left(x_{cg} \mathbb{E}_q[\Gamma_{cg}] - \log 2 - \omega_{cg}\right) \\
-&\qquad + \sum_{cg} \left(\frac{1}{2}(\xi_{cg}^2-\mathbb{E}_q[\Gamma_{cg}^2]\mathbb{E}_q[Y_{cg}]) - \log\cosh \frac{1}{2} \hat \xi_{cg} + \omega_{cg}\right)\\
-&\qquad - \sum_{c} \mathtt{KLN}(\hat \mu_{Z,c},\hat \Sigma_{Z,c}||0,I) 
-        - \sum_{g} \mathtt{KLN}(\hat \mu_{\alpha,g},\hat \Sigma_{\alpha,g}||0,I)
-\end{align*}
-where $\mathtt{KLN}$ indicates the Gaussian KL divergence and 
-\begin{align*}
-\mathbb{E}_q[\Gamma_{cg}]&=\hat \mu_{Z,c}^T\hat \mu_{\alpha,c} \\
-\mathbb{E}_q[\Gamma_{cg}^2]&=\mathrm{tr}\left((\hat \mu_{Z,c}\hat \mu_{Z,c}^T + \hat \Sigma_{Z,c})(\hat \mu_{\alpha,c}\hat \mu_{\alpha,c}^T + \hat \Sigma_{\alpha,c})\right) \\
-\mathbb{E}_q[Y_{cg}] & = \tanh(\hat \xi_{cg}/2)/(2\hat \xi_{cg})\\
-\omega_{cg} & \triangleq \mathbb{E}_q\left[\log \cosh \frac{1}{2} \Gamma_{cg}\right]
-\end{align*}
-Note that the intractable $\omega$ terms cancel in $\mathcal L$ and everything else we have in closed form.  
-
-\subsection{Updates}
-
-This ELBO can be optimized via coordinate ascent.  In particular, taking gradients and setting them equal to zero, we get three different kinds of updates, each of which won't make our objective worse and might make them better:
-\begin{align*}
-\hat \xi_{cg} &\gets \sqrt{\mathbb E[\Gamma_{cg}^2]}\\
-\hat \Sigma_{Z,c}^{-1} & \gets I+\sum_{g}\mathbb{E}_q[Y_{cg}]\mathbb{E}_q[\alpha_{g}\alpha_{g}^T] &
-\hat \mu_{Z,c} & \gets \hat\Sigma_{Z,c} \left(\sum_{g}\mathbb{E}_q[\alpha_g]x_{cg}\right) \\
-\hat \Sigma_{\alpha,g}^{-1} & \gets I+\sum_{c}\mathbb{E}_q[Y_{cg}]\mathbb{E}_q[Z_c Z_c^T] &
-\hat \mu_{\alpha,g} & \gets \hat\Sigma_{\alpha,g} \left(\sum_{c}\mathbb{E}_q[Z_c]x_{cg}\right) 
-\end{align*}
-
-\subsection{ELBO computation}
-
-Fix our variational posterior parameters for $Z,\alpha$.  After performing the $\xi$ update, we calculate that:
-\begin{align*}
-\mathbb{E}_q[\Gamma_{cg}]&=\hat \mu_{Z,c}^T\hat \mu_{\alpha,c} \\
-\mathbb{E}_q[\Gamma_{cg}^2]&=\mathrm{tr}\left((\hat \mu_{Z,c}\hat \mu_{Z,c}^T + \hat \Sigma_{Z,c})(\hat \mu_{\alpha,c}\hat \mu_{\alpha,c}^T + \hat \Sigma_{\alpha,c})\right) \\
-\mathbb{E}_q[Y_{cg}] &= \tanh\left(\sqrt{\mathbb{E}_q[\Gamma_{cg}^2]}/2\right)/\left(2\sqrt{\mathbb{E}_q[\Gamma_{cg}^2]}\right)\\
-\mathcal{L} &= \sum_{cg} \left(x_{cg} \mu_{Z,c}^T\mu_{\alpha,g} - \log 2 - \omega_{cg}\right) \\
-&\qquad + \sum_{cg} \left(\frac{1}{2}\mathbb{E}_q[\Gamma_{cg}^2](1-\mathbb{E}_q[Y_{cg}]) - \log\cosh \frac{1}{2} \hat \xi_{cg} + \omega_{cg}\right)\\
-&\qquad - \frac{1}{2}\sum_{c} \left(\mathrm{tr}(\hat \Sigma_{Z,c}) + \hat \mu_{Z,c}\hat \mu_{Z,c}^T - \log|\hat \Sigma_{Z,c}| - |I|\right) \\
-&\qquad - \frac{1}{2}\sum_{g} \left(\mathrm{tr}(\hat \Sigma_{\alpha,g}) + \hat \mu_{\alpha,g}\hat \mu_{\alpha,g}^T - \log|\hat \Sigma_{\alpha,g}| - |I|\right) \\
-\end{align*}
-
-\subsection{Initialization}
-
-The optimization perspective may give a reasonable initial conditions; let's denote them $z^0,\alpha^0$.  It turns out a sensible starting condition is actually $\Sigma_Z=\Sigma_\alpha=0$.  This yields an infinitely poor ELBO, but one round of updates quickly sorts that out.
 
 \end{document}
