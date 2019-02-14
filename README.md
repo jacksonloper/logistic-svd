@@ -1,3 +1,5 @@
+See the [pdf](math/math.pdf) for details.  Or look at ugly non-tex here:
+
 # Objective
 
 For any fixed matrix X with entries X_{cg} in {0,1} and any n>=1, let
