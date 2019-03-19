@@ -79,8 +79,8 @@ def logistic_likelihood(tdata,zt,alphat,binsize=5000,verbose=False):
 
     Let 
 
-        Gamma[c,g] = sum_{k} z[c,k] alpha[g,k]
-        L = sum_{cg} (tdata[c,g]-.5) Gamma[c,g] - log(2(cosh(Gamma[c,g]/2)))
+        Lambda[c,g] = sum_{k} z[c,k] alpha[g,k]
+        L = sum_{cg} (tdata[c,g]-.5) Lambda[c,g] - log(2(cosh(Lambda[c,g]/2)))
 
     This function computes L.  It does so in batches of size binsize.  So
     for example, it first computes the sum over c=[0:binsize], then c[binsize:binsize*2].
@@ -129,17 +129,19 @@ def prepzs(z):
     
     return torch.einsum('ci,cj->cij',z,z)
     
-def update_alpha_inner(dmhalf,z,alpha,prepzs,mtx,vec):
+def update_alpha_inner(dmhalf,z,alpha,prepzs,mtx,vec,protoz=None,protoalpha=None):
     '''
     Improve quadratically regularized logistic objective.
 
     Inputs:
-        dmhalf -- Nc x Ng
-        z      -- Nc x Nk
-        alpha0 -- Ng x Nk
-        prepzs -- Nc x Nk x Nk
-        mtx    -- Ng x Nk x Nk
-        vec    -- Ng x Nk 
+        dmhalf     -- Nc x Ng
+        z          -- Nc x Nk
+        alpha0     -- Ng x Nk
+        prepzs     -- Nc x Nk x Nk
+        mtx        -- Ng x Nk x Nk
+        vec        -- Ng x Nk 
+        protoz     -- Nc x Nm  or None 
+        protoalpha -- Ng x Nm  or None
 
     Output:
         alpha1 -- Ng x Nk
@@ -148,11 +150,11 @@ def update_alpha_inner(dmhalf,z,alpha,prepzs,mtx,vec):
     
     Let 
 
-        Gamma[c,g] = sum_{k} z[c,k] alpha[g,k]
+        Lambda[c,g] = sum_{k} z[c,k] alpha[g,k]
 
     and consider the objective 
 
-        L(alpha) = sum_{cg} dmhalf[c,g] Gamma[c,g] - log(2(cosh(Gamma[c,g]/2)))
+        L(alpha) = sum_{cg} dmhalf[c,g] Lambda[c,g] - log(2(cosh(Lambda[c,g]/2)))
                         -.5 sum_{cij} mtx[g,i,j] alpha[g,i] alpha[g,j]
                         + sum_{ck} vec[g,k] alpha[g,k]
         
@@ -173,38 +175,55 @@ def update_alpha_inner(dmhalf,z,alpha,prepzs,mtx,vec):
     Nk=z.shape[1]
 
     logits = z@ alpha.t() # Nc x Ng
-    Mg = pge_safe(logits) # Nc x Ng
 
-    '''
+    # with no protoalpha
+    if protoalpha is None:
 
-    For each cell, we need to compute
-    ztx[g,k] = vec[g,k] + sum_c z[c,k] dmhalf[c,g]
-    mtx[g,k1,k2] = mtx[g,k1,k2] + sum_c Mg[c,g] prepzs[c,k1,k2]
+        # get minorizer
+        Mg = pge_safe(logits) # Nc x Ng
 
-    We will feed gesv matrices of the form
-    - B (Nc, Nk,1)
-    - A (Nc, Nk,Nk)
+        '''
 
-    '''
+        For each cell, we need to compute
+        ztx[g,k] = vec[g,k] + sum_c z[c,k] dmhalf[c,g]
+        mtx[g,k1,k2] = mtx[g,k1,k2] + sum_c Mg[c,g] prepzs[c,k1,k2]
 
-    ztx = (vec+dmhalf.t() @ z)[:,:,None] # <-- g x k x 1
-    mtx = mtx + torch.einsum('cg,cij->gij',Mg,prepzs) # <-- g x k x k
-    
-    rez,LU=torch.gesv(ztx,mtx)
-    
-    return rez[:,:,0]
+        We will feed gesv matrices of the form
+        - B (Nc, Nk,1)
+        - A (Nc, Nk,Nk)
 
-def update_alpha(tdata,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,binsize=5000):
+        '''
+
+        ztx = (vec+dmhalf.t() @ z)[:,:,None] # <-- g x k x 1
+        mtx = mtx + torch.einsum('cg,cij->gij',Mg,prepzs) # <-- g x k x k
+        
+        rez,LU=torch.gesv(ztx,mtx)
+        
+        return rez[:,:,0]
+
+    # with protoalpha, much the same
+    else:
+        protologits=protoz @ protoalpha.t() # Nc x Ng
+        Mg = pge_safe(logits+protologits) # Nc x Ng
+        ztx = (vec+(dmhalf - Mg*protologits).t() @ z)[:,:,None] # <-- g x k x 1
+        mtx = mtx + torch.einsum('cg,cij->gij',Mg,prepzs) # <-- g x k x k
+        rez,LU=torch.gesv(ztx,mtx)
+        return rez[:,:,0]
+
+
+def update_alpha(tdata,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,binsize=5000,protoz=None,protoalpha=None):
     '''
     Improve quadratically regularized logistic objective.
 
     Inputs:
-        tdata   -- Nc x Ng, uint8
-        z       -- Nc x Nk
-        alpha0  -- Ng x Nk
-        reg_mtx -- Ng x Nk x Nk   [OR]  scalar  [OR]  None
-        reg_vec -- Ng x Nk        [OR]  None
-        binsize -- scalar
+        tdata      -- Nc x Ng, uint8
+        z          -- Nc x Nk
+        alpha0     -- Ng x Nk
+        reg_mtx    -- Ng x Nk x Nk   [OR]  scalar  [OR]  None
+        reg_vec    -- Ng x Nk        [OR]  None
+        binsize    -- scalar
+        protoz     -- Nc x Nm        [OR]  None
+        protoalpha -- Ng x Nm        [OR]  None
 
     Output:
         alpha1 -- Ng x Nk
@@ -213,10 +232,10 @@ def update_alpha(tdata,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,binsize=5
 
     Consider the objective 
 
-    L(alpha) = sum_{cg} (tdata[c,g]-.5) Gamma[c,g] - log(2(cosh(Gamma[c,g]/2)))
+    L(alpha) = sum_{cg} (tdata[c,g]-.5) Lambda[c,g] - log(2(cosh(Lambda[c,g]/2)))
                         -.5 sum_{cij} mtx[g,i,j] alpha[g,i] alpha[g,j]
-                        + sum_{ck} vec[g,k] alpha[g,k]
-    Gamma[c,g] = sum_{k} z[c,k] alpha[g,k]
+                        + sum_{ck} vec[g,k] alpha[g,k] + sum_{m} protoz[c,m] protoalpha[g,m]
+    Lambda[c,g] = sum_{k} z[c,k] alpha[g,k]
 
     Using an initial condition alpha0, we find a new value alpha1 such that 
     L(alpha1) >= L(alpha0).  We compute the new values of alpha1 
@@ -256,7 +275,22 @@ def update_alpha(tdata,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,binsize=5
         assert isinstance(reg_vec,torch.Tensor)
         assert reg_vec.shape==(Ng,Nk)
         reg_vecs=[reg_vec[bins[i]:bins[i+1]] for i in range(len(bins)-1)]
+
+
+    # process vector regularizer
+    if reg_vec is None:
+        reg_vecs=[0.0]*(len(bins)-1)
+    else:
+        assert isinstance(reg_vec,torch.Tensor)
+        assert reg_vec.shape==(Ng,Nk)
+        reg_vecs=[reg_vec[bins[i]:bins[i+1]] for i in range(len(bins)-1)]
     
+    # process protoalpha
+    if protoalpha is None:
+        protoalpha=[None]*(len(bins)-1)
+    else:
+        protoalpha=[protoalpha[bins[i]:bins[i+1]] for i in range(len(bins)-1)]
+
     # prep the outer products of the zs
     prep=prepzs(z)
     
@@ -264,6 +298,15 @@ def update_alpha(tdata,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,binsize=5
     alphas=[]
     for i in simpletqdm.tqdm_dispatcher(len(bins)-1,verbose):
         dmhalf=tdata[:,bins[i]:bins[i+1]].double()-.5
-        alphas.append(update_alpha_inner(dmhalf,z,alpha[bins[i]:bins[i+1]],prep,reg_mtxs[i],reg_vecs[i]))
+        alphas.append(update_alpha_inner(
+            dmhalf,
+            z,
+            alpha[bins[i]:bins[i+1]],
+            prep,
+            reg_mtxs[i],
+            reg_vecs[i],
+            protoz,
+            protoalpha[i]
+        ))
       
     return torch.cat(alphas)

@@ -23,11 +23,11 @@ def initialize(data,rank,verbose=False):
     ======
     Let 
 
-        Gamma[c,g] = sum_{k} z[c,k] alpha[g,k]
+        Lambda[c,g] = sum_{k} z[c,k] alpha[g,k]
 
     Consider the objective 
 
-        L = sum_{cg} (data[c,g]-.5) Gamma[c,g] - log(2(cosh(Gamma[c,g]/2)))
+        L = sum_{cg} (data[c,g]-.5) Lambda[c,g] - log(2(cosh(Lambda[c,g]/2)))
 
     We find a reasonable initial condition for (z,alpha) using svd.
     '''
@@ -119,17 +119,26 @@ def logistic_likelihood(data,z,alpha,verbose=False):
 
     return l
 
-def update_alpha_onestep(dmhalfg,z,alphag,mtx,vec,prepzs):
+def update_alpha_onestep(dmhalfg,z,alphag,mtx,vec,prepzs,protoz=None,protoalpha=None):
     Nk=z.shape[1]
 
-    # compute M for this gene for each cells
     logits = z@alphag  # Nc
-    Mg = pge_safe(logits) # Nc
 
-    # solve the equation
-    ztx = z.T @ dmhalfg + vec
-    mtx = (Mg @ prepzs).reshape((Nk,Nk))+mtx
-    return np.linalg.solve(mtx,ztx)
+    if protoz is None:
+        # compute M for this gene for each cells
+        Mg = pge_safe(logits) # Nc
+
+        # solve the equation
+        ztx = z.T @ dmhalfg + vec
+        mtx = (Mg @ prepzs).reshape((Nk,Nk))+mtx
+        return np.linalg.solve(mtx,ztx)
+
+    else:
+        protologits=protoz@protoalpha # Nc
+        Mg = pge_safe(logits+protologits) # Nc
+        ztx = z.T @ (dmhalfg-Mg*protologits) + vec
+        mtx = (Mg @ prepzs).reshape((Nk,Nk))+mtx
+        return np.linalg.solve(mtx,ztx)
 
 class ConstantList:
     def __init__(self,val):
@@ -138,7 +147,7 @@ class ConstantList:
     def __getitem__(self,g):
         return self.val
 
-def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False):
+def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False,protoz=None,protoalpha=None):
     '''
     Improve quadratically regularized logistic objective.
 
@@ -149,6 +158,8 @@ def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False):
         reg_mtx -- Ng x Nk x Nk   [OR]  scalar  [OR]  None
         reg_vec -- Ng x Nk        [OR]  None
         binsize -- scalar
+        protoz     -- Nc x Nm        [OR]  None
+        protoalpha -- Ng x Nm        [OR]  None
 
     Output:
         alpha1 -- Ng x Nk
@@ -157,10 +168,10 @@ def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False):
 
     Consider the objective 
 
-    L(alpha) = sum_{cg} (data[c,g]-.5) Gamma[c,g] - log(2(cosh(Gamma[c,g]/2)))
+    L(alpha) = sum_{cg} (data[c,g]-.5) Lambda[c,g] - log(2(cosh(Lambda[c,g]/2)))
                         -.5 sum_{cij} mtx[g,i,j] alpha[g,i] alpha[g,j]
                         + sum_{ck} vec[g,k] alpha[g,k]
-    Gamma[c,g] = sum_{k} z[c,k] alpha[g,k]
+    Lambda[c,g] = sum_{k} z[c,k] alpha[g,k] + sum_{m} protoz[c,m] protoalpha[g,m]
 
     Using an initial condition alpha0, we find a new value alpha1 such that 
     L(alpha1) >= L(alpha0).  We compute the new values of alpha1 
@@ -192,6 +203,10 @@ def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False):
         assert isinstance(reg_mtx,np.ndarray)
         assert reg_mtx.shape==(Ng,Nk)
 
+    # process protoalpha
+    if protoalpha is None:
+        protoalpha=ConstantList(None)
+
     # we will need to compute z[c]z[c]^T over and over again for each gene...
     prepzs=np.zeros((Nc,Nk*Nk))
     for c in range(Nc):
@@ -200,7 +215,15 @@ def update_alpha(data,z,alpha,reg_mtx=None,reg_vec=None,verbose=False):
     # comptue the updates
     newalpha=np.zeros((Ng,Nk))
     for g in simpletqdm.tqdm_dispatcher(Ng,verbose=verbose):
-        newalpha[g] = update_alpha_onestep(data[:,g]-.5,z,alpha[g],reg_mtx[g],reg_vec[g],prepzs)
+        newalpha[g] = update_alpha_onestep(
+            data[:,g]-.5,
+            z,alpha[g],
+            reg_mtx[g],
+            reg_vec[g],
+            prepzs,
+            protoz,
+            protoalpha[g]
+        )
 
     return newalpha 
 
